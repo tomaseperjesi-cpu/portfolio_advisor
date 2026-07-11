@@ -622,8 +622,11 @@ elif page == "📥 Import dát":
         st.markdown("**Voliteľná alternatíva** k záložke Claude export: screenshoty číta "
                     "Claude API priamo z appky (platené za tokeny, rádovo centy). Kľúč sa "
                     "berie zo `st.secrets['ANTHROPIC_API_KEY']`, alebo ho zadaj nižšie.")
-        api_key = st.secrets.get("ANTHROPIC_API_KEY", "") or st.text_input(
-            "Anthropic API kľúč", type="password")
+        try:
+            secret_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        except Exception:
+            secret_key = ""
+        api_key = secret_key or st.text_input("Anthropic API kľúč", type="password")
         kind = st.radio("Typ screenshotov",
                         ["Zacks (rank + style scores)",
                          "Simply Wall St (fair value + snowflake)"], horizontal=True)

@@ -156,10 +156,22 @@ def extract_from_screenshots(images, kind, api_key, model="claude-sonnet-4-6"):
     Vracia (rows, errors).
     """
     import anthropic
+    from PIL import Image
     client = anthropic.Anthropic(api_key=api_key)
     prompt = ZACKS_PROMPT if kind == "zacks" else SWS_PROMPT
     rows, errors = [], []
     for fname, data, mime in images:
+        # zmenšenie veľkých screenshotov: šetrí RAM aj limit velkosti obrázka v API
+        try:
+            img = Image.open(io.BytesIO(data))
+            if max(img.size) > 1600 or len(data) > 3_500_000:
+                img.thumbnail((1600, 1600), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.convert("RGB").save(buf, format="PNG", optimize=True)
+                data, mime = buf.getvalue(), "image/png"
+            img.close()
+        except Exception:
+            pass  # ak zmenšenie zlyhá, pošle sa originál
         try:
             msg = client.messages.create(
                 model=model,
@@ -330,7 +342,7 @@ def map_isins_openfigi(isins, api_key=None, timeout=15):
     if api_key:
         headers["X-OPENFIGI-APIKEY"] = api_key
     batch_size = 100 if api_key else 5
-    isins = [i for i in isins if i]
+    isins = [i for i in isins if i][:500]  # poistka
     for i in range(0, len(isins), batch_size):
         chunk = isins[i:i + batch_size]
         jobs = [{"idType": "ID_ISIN", "idValue": isin} for isin in chunk]
