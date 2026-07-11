@@ -384,9 +384,52 @@ if page == "📊 Prehľad":
 elif page == "📥 Import dát":
     st.title("Import dát")
 
-    tab_pdf, tab_csv, tab_zx, tab_sws, tab_shot, tab_cons, tab_json = st.tabs(
+    tab_pdf, tab_csv, tab_zx, tab_sws, tab_claude, tab_shot, tab_cons, tab_json = st.tabs(
         ["Trading 212 PDF", "Simply Wall St CSV", "Zacks online", "SWS online",
-         "Screenshoty (Zacks / SWS)", "Konsenzus analytikov", "Záloha (JSON)"])
+         "Claude export (CSV)", "Screenshoty cez API (voliteľné)",
+         "Konsenzus analytikov", "Záloha (JSON)"])
+
+    # ---- Claude export CSV (bezplatný screenshot workflow)
+    with tab_claude:
+        st.markdown(
+            "**Bezplatný workflow pre screenshoty:** nahraj screenshoty (Zacks watchlist, "
+            "SWS valuácie) do chatu s Claude a popros o export v tomto formáte. Vrátený "
+            "CSV súbor sem nahraj – appka ho zmerguje s existujúcimi dátami.\n\n"
+            "Formát: povinný stĺpec `ticker`, voliteľné `name, group, zacks_rank, value, "
+            "growth, momentum, vgm, sws_fv_pct, snowflake (1-5 alebo green/lime/yellow/"
+            "orange/red), analyst_target, consensus, industry_rank_pct`. "
+            "**Prázdne bunky sa ignorujú** – import nikdy neprepíše existujúce dáta prázdnom.")
+        st.code("ticker,zacks_rank,vgm,sws_fv_pct,snowflake,analyst_target\n"
+                "MSFT,3,B,30.5,green,562\n"
+                "MU,1,C,-71.8,lime,\n"
+                "HIMS,5,D,-854.4,orange,3.86", language="csv")
+        ups_c = st.file_uploader("CSV z Claude", type="csv", accept_multiple_files=True,
+                                 key="claude_csv")
+        if ups_c and st.button("Importovať Claude export"):
+            n, all_errs = 0, []
+            for f in ups_c:
+                rows, errs = parsers.parse_claude_csv(f.read())
+                all_errs += errs
+                for r in rows:
+                    e = get_entry(r["ticker"])
+                    if r.get("name"):
+                        e["name"] = e["name"] or r["name"]
+                    if r.get("group") and r["group"] not in e["groups"]:
+                        e["groups"].append(r["group"])
+                    for src, dst in (("zacks_rank", "zacks_rank"), ("vgm", "zacks_vgm"),
+                                     ("value", "zacks_v"), ("growth", "zacks_g"),
+                                     ("momentum", "zacks_m"), ("consensus", "consensus"),
+                                     ("sws_fv_pct", "sws_fv_pct"),
+                                     ("analyst_target", "analyst_target"),
+                                     ("industry_rank_pct", "industry_rank_pct"),
+                                     ("snowflake", "snow_level")):
+                        if src in r:
+                            e[dst] = r[src]
+                    n += 1
+            save_store()
+            st.success(f"Importovaných {n} riadkov.")
+            for err in all_errs[:15]:
+                st.caption(f"⚠ {err}")
 
     # ---- SWS online (grid API)
     with tab_sws:
@@ -515,10 +558,26 @@ elif page == "📥 Import dát":
                 st.success(f"Načítaných {len(rows)} pozícií"
                            + (f", deklarovaná hodnota {tot}" if tot else ""))
         if "pdf_rows" in st.session_state:
-            st.markdown("**Priraď tickery** (návrhy podľa už načítaných dát):")
+            st.markdown("**Priraď tickery.** Návrhy sa berú z už načítaných dát a z "
+                        "automatického ISIN mapovania. Riadky s prázdnym tickerom sa neuložia.")
+            figi_key = st.text_input("OpenFIGI API kľúč (voliteľné – bez neho je mapovanie "
+                                     "pomalšie, kľúč zadarmo na openfigi.com/api)",
+                                     type="password", key="figi_key")
+            if st.button("🔎 Doplniť tickery automaticky podľa ISIN (OpenFIGI)"):
+                isins = [r["isin"] for r in st.session_state.pdf_rows]
+                n_batches = -(-len(isins) // (100 if figi_key else 5))
+                with st.spinner(f"Mapujem {len(isins)} ISINov"
+                                + ("" if figi_key else f" (~{n_batches * 3} s bez kľúča)") + "..."):
+                    mapping, ferrs = parsers.map_isins_openfigi(isins, figi_key or None)
+                st.session_state.figi_map = mapping
+                st.success(f"Namapovaných {len(mapping)} tickerov, {len(ferrs)} chýb.")
+                for err in ferrs[:10]:
+                    st.caption(f"⚠ {err}")
+            figi_map = st.session_state.get("figi_map", {})
             dfm = pd.DataFrame([{
                 "Názov": r["name"],
-                "Ticker": suggest_symbol(r["name"], st.session_state.stocks),
+                "Ticker": (figi_map.get(r["isin"])
+                           or suggest_symbol(r["name"], st.session_state.stocks)),
                 "Množstvo": r["qty"], "Mena": r["currency"], "Cena": r["price"],
             } for r in st.session_state.pdf_rows])
             edited = st.data_editor(dfm, num_rows="fixed", use_container_width=True,
@@ -560,8 +619,9 @@ elif page == "📥 Import dát":
             st.success(f"Spracovaných {n} riadkov do sekcie \u201e{grp2}\u201c.")
 
     with tab_shot:
-        st.markdown("Screenshoty číta **Claude API** (vision). Kľúč sa berie zo "
-                    "`st.secrets['ANTHROPIC_API_KEY']`, alebo ho zadaj nižšie.")
+        st.markdown("**Voliteľná alternatíva** k záložke Claude export: screenshoty číta "
+                    "Claude API priamo z appky (platené za tokeny, rádovo centy). Kľúč sa "
+                    "berie zo `st.secrets['ANTHROPIC_API_KEY']`, alebo ho zadaj nižšie.")
         api_key = st.secrets.get("ANTHROPIC_API_KEY", "") or st.text_input(
             "Anthropic API kľúč", type="password")
         kind = st.radio("Typ screenshotov",

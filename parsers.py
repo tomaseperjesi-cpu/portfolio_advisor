@@ -312,3 +312,99 @@ def fetch_sws_online(symbols, timeout=12, pause=0.6):
             errors.append(f"{t}: {e}")
         time.sleep(pause)
     return rows, errors
+
+
+# ---------------------------------------------------------------- OpenFIGI (ISIN -> ticker)
+
+def map_isins_openfigi(isins, api_key=None, timeout=15):
+    """Mapuje ISIN -> ticker cez bezplatné OpenFIGI API (Bloomberg).
+
+    Bez API kľúča: max 5 ISIN na request, ~25 requestov/min (appka batchuje a čaká).
+    S bezplatným kľúčom (openfigi.com/api): 100 ISIN na request.
+    Vracia (mapping dict {isin: ticker}, errors).
+    """
+    import time
+    import requests
+    mapping, errors = {}, []
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-OPENFIGI-APIKEY"] = api_key
+    batch_size = 100 if api_key else 5
+    isins = [i for i in isins if i]
+    for i in range(0, len(isins), batch_size):
+        chunk = isins[i:i + batch_size]
+        jobs = [{"idType": "ID_ISIN", "idValue": isin} for isin in chunk]
+        try:
+            r = requests.post("https://api.openfigi.com/v3/mapping",
+                              json=jobs, headers=headers, timeout=timeout)
+            if r.status_code == 429:
+                time.sleep(20)
+                r = requests.post("https://api.openfigi.com/v3/mapping",
+                                  json=jobs, headers=headers, timeout=timeout)
+            r.raise_for_status()
+            for isin, res in zip(chunk, r.json()):
+                data = res.get("data") or []
+                if data:
+                    mapping[isin] = data[0].get("ticker", "")
+                else:
+                    errors.append(f"{isin}: OpenFIGI nenašiel ticker")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"batch {chunk[0]}...: {e}")
+        if not api_key:
+            time.sleep(2.6)  # limit bez kľúča ~25 req/min
+    return mapping, errors
+
+
+# ---------------------------------------------------------------- univerzálny Claude export CSV
+
+SNOW_WORD = {"green": 5, "lime": 4, "yellow": 3, "orange": 2, "red": 1,
+             "zelena": 5, "zltozelena": 4, "zlta": 3, "oranzova": 2, "cervena": 1}
+
+CLAUDE_CSV_COLS = ["ticker", "name", "group", "zacks_rank", "value", "growth",
+                   "momentum", "vgm", "sws_fv_pct", "snowflake", "analyst_target",
+                   "consensus", "industry_rank_pct"]
+
+
+def parse_claude_csv(file_bytes):
+    """Parsuje univerzálny CSV export z Claude chatu (alebo ručne vytvorený).
+
+    Povinný stĺpec: ticker. Ostatné voliteľné - PRÁZDNE BUNKY SA IGNORUJÚ,
+    takže import nikdy neprepíše existujúce dáta prázdnom.
+    snowflake: 1-5 alebo farba (green/lime/yellow/orange/red).
+    Vracia (rows, errors).
+    """
+    import unicodedata
+    df = pd.read_csv(io.BytesIO(file_bytes), dtype=str)
+    df.columns = [c.strip().lower() for c in df.columns]
+    if "ticker" not in df.columns:
+        return [], ["CSV neobsahuje povinný stĺpec 'ticker'"]
+    rows, errors = [], []
+    for idx, r in df.iterrows():
+        t = str(r.get("ticker") or "").strip().upper()
+        if not t or t == "NAN":
+            continue
+        out = {"ticker": t}
+        for col in ("name", "group", "zacks_rank", "vgm", "value", "growth",
+                    "momentum", "consensus"):
+            v = r.get(col)
+            if v is not None and not pd.isna(v) and str(v).strip():
+                out[col] = str(v).strip()
+        for col in ("sws_fv_pct", "analyst_target", "industry_rank_pct"):
+            v = r.get(col)
+            if v is not None and not pd.isna(v) and str(v).strip():
+                try:
+                    out[col] = float(str(v).replace(",", ".").replace("%", "").strip())
+                except ValueError:
+                    errors.append(f"riadok {idx + 2} ({t}): '{col}' nie je číslo: {v}")
+        v = r.get("snowflake")
+        if v is not None and not pd.isna(v) and str(v).strip():
+            sv = str(v).strip().lower()
+            sv_norm = unicodedata.normalize("NFKD", sv).encode("ascii", "ignore").decode()
+            if sv in {"1", "2", "3", "4", "5"}:
+                out["snowflake"] = int(sv)
+            elif sv_norm in SNOW_WORD:
+                out["snowflake"] = SNOW_WORD[sv_norm]
+            else:
+                errors.append(f"riadok {idx + 2} ({t}): neznámy snowflake: {v}")
+        rows.append(out)
+    return rows, errors
