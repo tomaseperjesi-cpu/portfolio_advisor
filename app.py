@@ -10,6 +10,9 @@ import datetime as dt
 import difflib
 import json
 import pathlib
+import traceback
+
+APP_VERSION = "1.2 (diag)"
 
 import pandas as pd
 import streamlit as st
@@ -269,6 +272,19 @@ page = st.sidebar.radio("Navigácia",
                          "⚙️ Nastavenia a metodika"])
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Načítaných akcií: **{len(st.session_state.stocks)}**")
+st.sidebar.caption(f"Verzia appky: **{APP_VERSION}**")
+with st.sidebar.expander("🔧 Diagnostika"):
+    import sys
+    checks = {
+        "parsers.map_isins_openfigi": hasattr(parsers, "map_isins_openfigi"),
+        "parsers.fetch_zacks_online": hasattr(parsers, "fetch_zacks_online"),
+        "parsers.parse_claude_csv": hasattr(parsers, "parse_claude_csv"),
+        "parsers.fetch_sws_online": hasattr(parsers, "fetch_sws_online"),
+    }
+    for k, ok in checks.items():
+        st.caption(("✅ " if ok else "❌ CHÝBA: ") + k)
+    st.caption(f"Python {sys.version.split()[0]}")
+    st.caption(f"parsers.py: {pathlib.Path(parsers.__file__).stat().st_size} B")
 snap = last_snapshot()
 if snap:
     st.sidebar.caption(f"Posledný snapshot: **{snap['ts'].replace('T', ' ')}**"
@@ -566,13 +582,17 @@ elif page == "📥 Import dát":
             if st.button("🔎 Doplniť tickery automaticky podľa ISIN (OpenFIGI)"):
                 isins = [r["isin"] for r in st.session_state.pdf_rows]
                 n_batches = -(-len(isins) // (100 if figi_key else 5))
-                with st.spinner(f"Mapujem {len(isins)} ISINov"
-                                + ("" if figi_key else f" (~{n_batches * 3} s bez kľúča)") + "..."):
-                    mapping, ferrs = parsers.map_isins_openfigi(isins, figi_key or None)
-                st.session_state.figi_map = mapping
-                st.success(f"Namapovaných {len(mapping)} tickerov, {len(ferrs)} chýb.")
-                for err in ferrs[:10]:
-                    st.caption(f"⚠ {err}")
+                try:
+                    with st.spinner(f"Mapujem {len(isins)} ISINov"
+                                    + ("" if figi_key else f" (~{n_batches * 3} s bez kľúča)") + "..."):
+                        mapping, ferrs = parsers.map_isins_openfigi(isins, figi_key or None)
+                    st.session_state.figi_map = mapping
+                    st.success(f"Namapovaných {len(mapping)} tickerov, {len(ferrs)} chýb.")
+                    for err in ferrs[:10]:
+                        st.caption(f"⚠ {err}")
+                except Exception:
+                    st.error("Mapovanie zlyhalo – celý traceback (pošli ho na analýzu):")
+                    st.code(traceback.format_exc())
             figi_map = st.session_state.get("figi_map", {})
             dfm = pd.DataFrame([{
                 "Názov": r["name"],
