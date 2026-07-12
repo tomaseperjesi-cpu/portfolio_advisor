@@ -17,6 +17,8 @@ Import je merge-safe: prázdne bunky sa ignorujú a neprepisujú existujúce dá
 | analyst_target | nie | číslo (cieľová cena) |
 | consensus | nie | Strong Buy / Buy / Hold / Sell |
 | industry_rank_pct | nie | percentil odvetvia (Top 5 % → 5) |
+| qty / currency / price | nie | pozícia z T212 výpisu (mena USD/EUR/GBX/GBP/CAD); hodnota v EUR sa dopočíta |
+| value_eur | nie | alternatíva: priamo hodnota pozície v EUR |
 
 ## Prompt pre Claude chat
 

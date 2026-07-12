@@ -374,7 +374,8 @@ SNOW_WORD = {"green": 5, "lime": 4, "yellow": 3, "orange": 2, "red": 1,
 
 CLAUDE_CSV_COLS = ["ticker", "name", "group", "zacks_rank", "value", "growth",
                    "momentum", "vgm", "sws_fv_pct", "snowflake", "analyst_target",
-                   "consensus", "industry_rank_pct"]
+                   "consensus", "industry_rank_pct", "qty", "currency", "price",
+                   "value_eur"]
 
 
 def parse_claude_csv(file_bytes):
@@ -397,11 +398,12 @@ def parse_claude_csv(file_bytes):
             continue
         out = {"ticker": t}
         for col in ("name", "group", "zacks_rank", "vgm", "value", "growth",
-                    "momentum", "consensus"):
+                    "momentum", "consensus", "currency"):
             v = r.get(col)
             if v is not None and not pd.isna(v) and str(v).strip():
                 out[col] = str(v).strip()
-        for col in ("sws_fv_pct", "analyst_target", "industry_rank_pct"):
+        for col in ("sws_fv_pct", "analyst_target", "industry_rank_pct",
+                    "qty", "price", "value_eur"):
             v = r.get(col)
             if v is not None and not pd.isna(v) and str(v).strip():
                 try:

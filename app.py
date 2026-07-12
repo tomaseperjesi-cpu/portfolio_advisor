@@ -413,7 +413,8 @@ elif page == "📥 Import dát":
             "CSV súbor sem nahraj – appka ho zmerguje s existujúcimi dátami.\n\n"
             "Formát: povinný stĺpec `ticker`, voliteľné `name, group, zacks_rank, value, "
             "growth, momentum, vgm, sws_fv_pct, snowflake (1-5 alebo green/lime/yellow/"
-            "orange/red), analyst_target, consensus, industry_rank_pct`. "
+            "orange/red), analyst_target, consensus, industry_rank_pct, qty, currency, price, "
+            "value_eur` (pozičné stĺpce: hodnota v EUR sa dopočíta kurzami z Nastavení). "
             "**Prázdne bunky sa ignorujú** – import nikdy neprepíše existujúce dáta prázdnom.")
         st.code("ticker,zacks_rank,vgm,sws_fv_pct,snowflake,analyst_target\n"
                 "MSFT,3,B,30.5,green,562\n"
@@ -438,9 +439,15 @@ elif page == "📥 Import dát":
                                      ("sws_fv_pct", "sws_fv_pct"),
                                      ("analyst_target", "analyst_target"),
                                      ("industry_rank_pct", "industry_rank_pct"),
-                                     ("snowflake", "snow_level")):
+                                     ("snowflake", "snow_level"),
+                                     ("qty", "qty"), ("currency", "currency"),
+                                     ("price", "price"), ("value_eur", "value_eur")):
                         if src in r:
                             e[dst] = r[src]
+                    if "value_eur" not in r and all(k in r for k in ("qty", "currency", "price")):
+                        v = value_in_eur(r["qty"], r["currency"], r["price"], st.session_state.fx)
+                        if v is not None:
+                            e["value_eur"] = round(v, 2)
                     n += 1
             save_store()
             st.success(f"Importovaných {n} riadkov.")
@@ -574,30 +581,12 @@ elif page == "📥 Import dát":
                 st.success(f"Načítaných {len(rows)} pozícií"
                            + (f", deklarovaná hodnota {tot}" if tot else ""))
         if "pdf_rows" in st.session_state:
-            st.markdown("**Priraď tickery.** Návrhy sa berú z už načítaných dát a z "
-                        "automatického ISIN mapovania. Riadky s prázdnym tickerom sa neuložia.")
-            figi_key = st.text_input("OpenFIGI API kľúč (voliteľné – bez neho je mapovanie "
-                                     "pomalšie, kľúč zadarmo na openfigi.com/api)",
-                                     type="password", key="figi_key")
-            if st.button("🔎 Doplniť tickery automaticky podľa ISIN (OpenFIGI)"):
-                isins = [r["isin"] for r in st.session_state.pdf_rows]
-                n_batches = -(-len(isins) // (100 if figi_key else 5))
-                try:
-                    with st.spinner(f"Mapujem {len(isins)} ISINov"
-                                    + ("" if figi_key else f" (~{n_batches * 3} s bez kľúča)") + "..."):
-                        mapping, ferrs = parsers.map_isins_openfigi(isins, figi_key or None)
-                    st.session_state.figi_map = mapping
-                    st.success(f"Namapovaných {len(mapping)} tickerov, {len(ferrs)} chýb.")
-                    for err in ferrs[:10]:
-                        st.caption(f"⚠ {err}")
-                except Exception:
-                    st.error("Mapovanie zlyhalo – celý traceback (pošli ho na analýzu):")
-                    st.code(traceback.format_exc())
-            figi_map = st.session_state.get("figi_map", {})
+            st.markdown("**Priraď tickery** (návrhy z už načítaných dát; pohodlnejšia cesta: "
+                        "nahraj PDF do chatu s Claude a importuj vrátený CSV cez záložku "
+                        "Claude export). Riadky s prázdnym tickerom sa neuložia.")
             dfm = pd.DataFrame([{
                 "Názov": r["name"],
-                "Ticker": (figi_map.get(r["isin"])
-                           or suggest_symbol(r["name"], st.session_state.stocks)),
+                "Ticker": suggest_symbol(r["name"], st.session_state.stocks),
                 "Množstvo": r["qty"], "Mena": r["currency"], "Cena": r["price"],
             } for r in st.session_state.pdf_rows])
             edited = st.data_editor(dfm, num_rows="fixed", use_container_width=True,
